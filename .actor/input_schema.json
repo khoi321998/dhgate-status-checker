@@ -1,0 +1,53 @@
+{
+    "$schema": "https://apify.com/schemas/v1/input.ide.json",
+    "title": "DHgate Status Checker",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "startUrls": {
+            "title": "Start URLs",
+            "type": "array",
+            "description": "DHgate product or store URLs to check. Each URL is classified automatically (product vs store) unless you override it with the Mode field.",
+            "editor": "requestListSources",
+            "prefill": [
+                {
+                    "url": "https://www.dhgate.com/product/men-s-polos-luxury-brand-short-sleeve-polo/1064214730.html"
+                },
+                {
+                    "url": "https://www.dhgate.com/store/top-selling/21880856.html"
+                }
+            ]
+        },
+        "mode": {
+            "title": "Mode",
+            "type": "string",
+            "description": "What to check: product listings or seller/store pages. Applies to every URL in this run.",
+            "editor": "select",
+            "default": "product",
+            "enum": ["product", "seller"],
+            "enumTitles": ["Product", "Seller / Store"]
+        },
+        "maxConcurrency": {
+            "title": "Max Concurrency",
+            "type": "integer",
+            "description": "Maximum number of URLs checked in parallel.",
+            "default": 10,
+            "minimum": 1
+        },
+        "maxRequestsPerCrawl": {
+            "title": "Max Requests per Crawl",
+            "type": "integer",
+            "description": "Safety cap on total requests (including retries). 0 = unlimited.",
+            "default": 100,
+            "minimum": 0
+        },
+        "proxyConfiguration": {
+            "title": "Proxy Configuration",
+            "type": "object",
+            "description": "Optional proxy. DHgate usually works without a proxy; enable only if you hit blocks.",
+            "editor": "proxy",
+            "default": { "useApifyProxy": false }
+        }
+    },
+    "required": ["startUrls", "mode"]
+}

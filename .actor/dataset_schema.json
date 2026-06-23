@@ -1,0 +1,34 @@
+{
+    "$schema": "https://apify.com/schemas/v1/dataset.ide.json",
+    "actorSpecification": 1,
+    "fields": {},
+    "views": {
+        "overview": {
+            "title": "Overview",
+            "transformation": {
+                "fields": ["url", "active", "reason", "checkedAt"]
+            },
+            "display": {
+                "component": "table",
+                "properties": {
+                    "url": {
+                        "label": "URL",
+                        "format": "link"
+                    },
+                    "active": {
+                        "label": "Active",
+                        "format": "boolean"
+                    },
+                    "reason": {
+                        "label": "Reason",
+                        "format": "text"
+                    },
+                    "checkedAt": {
+                        "label": "Checked At",
+                        "format": "date"
+                    }
+                }
+            }
+        }
+    }
+}
