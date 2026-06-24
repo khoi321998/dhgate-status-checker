@@ -26,27 +26,6 @@
             "default": "product",
             "enum": ["product", "seller"],
             "enumTitles": ["Product", "Seller / Store"]
-        },
-        "maxConcurrency": {
-            "title": "Max Concurrency",
-            "type": "integer",
-            "description": "Maximum number of URLs checked in parallel.",
-            "default": 10,
-            "minimum": 1
-        },
-        "maxRequestsPerCrawl": {
-            "title": "Max Requests per Crawl",
-            "type": "integer",
-            "description": "Safety cap on total requests (including retries). 0 = unlimited.",
-            "default": 100,
-            "minimum": 0
-        },
-        "proxyConfiguration": {
-            "title": "Proxy Configuration",
-            "type": "object",
-            "description": "Optional proxy. DHgate usually works without a proxy; enable only if you hit blocks.",
-            "editor": "proxy",
-            "default": { "useApifyProxy": false }
         }
     },
     "required": ["startUrls", "mode"]

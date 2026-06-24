@@ -14,22 +14,13 @@ type Mode = 'product' | 'seller';
 interface Input {
     startUrls: { url: string }[];
     mode: Mode;
-    maxConcurrency: number;
-    maxRequestsPerCrawl: number;
-    proxyConfiguration?: { useApifyProxy?: boolean; [key: string]: unknown };
 }
 
 // Initialize the Apify SDK
 await Actor.init();
 
 // Structure of input is defined in input_schema.json
-const {
-    startUrls = [],
-    mode = 'product',
-    maxConcurrency = 10,
-    maxRequestsPerCrawl = 100,
-    proxyConfiguration: proxyInput,
-} = (await Actor.getInput<Input>()) ?? ({} as Input);
+const { startUrls = [], mode = 'product' } = (await Actor.getInput<Input>()) ?? ({} as Input);
 
 if (!startUrls.length) {
     log.warning('No startUrls provided, exiting.');
@@ -40,15 +31,8 @@ if (!startUrls.length) {
 const label = mode === 'seller' ? LABELS.SELLER : LABELS.PRODUCT;
 const startRequests = startUrls.map(({ url }) => ({ url: url.trim(), label }));
 
-// Only create a proxy configuration when the user explicitly enabled it.
-const proxyConfiguration = proxyInput?.useApifyProxy
-    ? await Actor.createProxyConfiguration(proxyInput)
-    : undefined;
-
 const crawler = new CheerioCrawler({
-    proxyConfiguration,
-    maxConcurrency,
-    maxRequestsPerCrawl,
+    maxConcurrency: 10,
     maxRequestRetries: 3,
     useSessionPool: true,
     persistCookiesPerSession: true,
