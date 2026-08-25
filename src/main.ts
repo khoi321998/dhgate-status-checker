@@ -7,6 +7,7 @@ import { Actor, log } from 'apify';
 
 // this is ESM project, and as such, it requires you to specify extensions in your relative imports
 // note that we need to use `.js` even when inside TS files
+import { currentActorRunId } from './output.js';
 import { LABELS, router } from './routes.js';
 
 type Mode = 'product' | 'seller';
@@ -18,6 +19,8 @@ interface Input {
 
 // Initialize the Apify SDK
 await Actor.init();
+
+log.info(`Actor run ID: ${currentActorRunId() ?? '(none — running locally)'}`);
 
 // Structure of input is defined in input_schema.json
 const { startUrls = [], mode = 'product' } = (await Actor.getInput<Input>()) ?? ({} as Input);

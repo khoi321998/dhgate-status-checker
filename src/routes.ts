@@ -1,6 +1,9 @@
 import type { CheerioCrawlingContext } from '@crawlee/cheerio';
 import { createCheerioRouter } from '@crawlee/cheerio';
 
+import type { StatusItem } from './output.js';
+import { currentActorRunId } from './output.js';
+
 type Cheerio$ = CheerioCrawlingContext['$'];
 
 export const LABELS = {
@@ -31,7 +34,13 @@ router.addHandler(LABELS.PRODUCT, async ({ $, body, request, response, log, push
     // Removed / non-existent product → dead, do not retry.
     if (status !== undefined && DEAD_STATUS.has(status)) {
         log.info(`${request.url} → active=false | reason=http_${status} (HTTP ${status})`);
-        await pushData({ url: request.url, active: false, reason: `http_${status}`, checkedAt: new Date().toISOString() });
+        await pushData({
+            url: request.url,
+            active: false,
+            reason: `http_${status}`,
+            checkedAt: new Date().toISOString(),
+            actorRunId: currentActorRunId(),
+        } satisfies StatusItem);
         return;
     }
 
@@ -58,7 +67,13 @@ router.addHandler(LABELS.PRODUCT, async ({ $, body, request, response, log, push
     else reason = 'live';
 
     log.info(`${request.url} → active=${active} | reason=${reason} (HTTP ${status})`);
-    await pushData({ url: request.url, active, reason, checkedAt: new Date().toISOString() });
+    await pushData({
+        url: request.url,
+        active,
+        reason,
+        checkedAt: new Date().toISOString(),
+        actorRunId: currentActorRunId(),
+    } satisfies StatusItem);
 });
 
 router.addHandler(LABELS.SELLER, async ({ $, request, response, log, pushData }) => {
@@ -67,7 +82,13 @@ router.addHandler(LABELS.SELLER, async ({ $, request, response, log, pushData })
     // Non-existent store → dead, do not retry.
     if (status !== undefined && DEAD_STATUS.has(status)) {
         log.info(`${request.url} → active=false | reason=http_${status} (HTTP ${status})`);
-        await pushData({ url: request.url, active: false, reason: `http_${status}`, checkedAt: new Date().toISOString() });
+        await pushData({
+            url: request.url,
+            active: false,
+            reason: `http_${status}`,
+            checkedAt: new Date().toISOString(),
+            actorRunId: currentActorRunId(),
+        } satisfies StatusItem);
         return;
     }
 
@@ -79,5 +100,11 @@ router.addHandler(LABELS.SELLER, async ({ $, request, response, log, pushData })
     const reason = active ? 'live' : 'no_store_dom'; // 200 but store header markers missing
 
     log.info(`${request.url} → active=${active} | reason=${reason} (HTTP ${status})`);
-    await pushData({ url: request.url, active, reason, checkedAt: new Date().toISOString() });
+    await pushData({
+        url: request.url,
+        active,
+        reason,
+        checkedAt: new Date().toISOString(),
+        actorRunId: currentActorRunId(),
+    } satisfies StatusItem);
 });
