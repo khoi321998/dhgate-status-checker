@@ -7,7 +7,7 @@
         "startUrls": {
             "title": "Start URLs",
             "type": "array",
-            "description": "DHgate product or store URLs to check. Each URL is classified automatically (product vs store) unless you override it with the Mode field.",
+            "description": "DHgate product URLs (Mode: Product) or seller/store URLs (Mode: Seller). Regional hosts such as es.dhgate.com are checked on www.dhgate.com with the matching ship-to country.",
             "editor": "requestListSources",
             "prefill": [
                 {
@@ -26,6 +26,19 @@
             "default": "product",
             "enum": ["product", "seller"],
             "enumTitles": ["Product", "Seller / Store"]
+        },
+        "maxRequestsPerCrawl": {
+            "title": "Max Requests per Crawl",
+            "type": "integer",
+            "description": "Maximum number of pages this run may open. Keep it at or above the number of URLs you pass in.",
+            "default": 1000,
+            "minimum": 1
+        },
+        "enableProxy": {
+            "title": "Use a proxy",
+            "type": "boolean",
+            "description": "Whether to route the browser through a proxy. When on, the run uses an Apify residential US exit (fixed in code: DHgate is behind Cloudflare, and that exit gets challenged least while giving each retried session a fresh IP). When off, the run goes out on the container's own IP — expect far more 'Verify you are human' challenges.",
+            "default": true
         }
     },
     "required": ["startUrls", "mode"]

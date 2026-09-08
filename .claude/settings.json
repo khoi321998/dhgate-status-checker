@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p dhgate-status-checker/src/utils dhgate-status-checker/src/handlers)",
+      "Bash(cp dhgate-data-scraper/src/utils/cloudflare.ts dhgate-status-checker/src/utils/cloudflare.ts)",
+      "Bash(cp dhgate-data-scraper/src/utils/browser.ts dhgate-status-checker/src/utils/browser.ts)",
+      "Bash(cp dhgate-data-scraper/src/utils/request.ts dhgate-status-checker/src/utils/request.ts)",
+      "Bash(cp \"d:/ApifyScript/DhGatePlatform/dhgate-data-scraper/Dockerfile\" \"d:/ApifyScript/DhGatePlatform/dhgate-status-checker/Dockerfile\" && head -5 \"d:/ApifyScript/DhGatePlatform/dhgate-status-checker/Dockerfile\")",
+      "PowerShell(npm install --audit=false 2>&1)"
+    ],
+    "additionalDirectories": [
+      "d:\\ApifyScript\\DhGatePlatform\\dhgate-data-scraper"
+    ]
+  }
+}

@@ -1,64 +1,243 @@
-// For more information, see https://crawlee.dev
-import { setTimeout } from 'node:timers/promises';
+import { setTimeout as sleep } from 'node:timers/promises';
 
-import { CheerioCrawler } from '@crawlee/cheerio';
+// For more information, see https://crawlee.dev
+import { PlaywrightCrawler } from '@crawlee/playwright';
 // For more information, see https://docs.apify.com/sdk/js
 import { Actor, log } from 'apify';
+// Drop-in Playwright fork with the automation leaks patched out — see `launcher` below.
+import { chromium as patchrightChromium } from 'patchright';
+import type { BrowserType } from 'playwright';
 
 // this is ESM project, and as such, it requires you to specify extensions in your relative imports
 // note that we need to use `.js` even when inside TS files
-import { currentActorRunId } from './output.js';
-import { LABELS, router } from './routes.js';
+import type { CheckMode } from './output.js';
+import { currentActorRunId, statusItem } from './output.js';
+import { createRouter, LABELS } from './routes.js';
+import { chooseChrome } from './utils/browser.js';
+import { passCloudflare } from './utils/cloudflare.js';
+import { DEFAULT_SHIP_COUNTRY, extractDhgateShipCountry, normalizeDhgateHost } from './utils/parse.js';
+import { describeProxy, pickProxy } from './utils/proxy.js';
+import { reportedUrl } from './utils/request.js';
 
-type Mode = 'product' | 'seller';
-
+/** Raw shape of the Actor input (see `.actor/input_schema.json`). */
 interface Input {
-    startUrls: { url: string }[];
-    mode: Mode;
+    startUrls: { url: string; userData?: Record<string, unknown> }[];
+    mode: CheckMode;
+    maxRequestsPerCrawl: number;
+    /**
+     * Whether to proxy at all. Defaults to `true`, which means the Apify residential US exit fixed
+     * in `utils/proxy.ts`; `false` goes out on the container's own IP. The exit itself is not
+     * configurable — see that file for why.
+     */
+    enableProxy?: boolean;
 }
 
 // Initialize the Apify SDK
 await Actor.init();
 
+// Locally there is no run — `actorRunId` is null unless the Actor is running on the platform.
+// The same value is stamped on every dataset row, see `statusItem`.
 log.info(`Actor run ID: ${currentActorRunId() ?? '(none — running locally)'}`);
 
-// Structure of input is defined in input_schema.json
-const { startUrls = [], mode = 'product' } = (await Actor.getInput<Input>()) ?? ({} as Input);
+// Structure of input is defined in .actor/input_schema.json
+const {
+    startUrls = [],
+    mode = 'product',
+    maxRequestsPerCrawl = 1000,
+    enableProxy = true,
+} = (await Actor.getInput<Input>()) ?? ({} as Input);
 
 if (!startUrls.length) {
     log.warning('No startUrls provided, exiting.');
     await Actor.exit();
 }
 
-// Every URL in a run is checked with the same mode (product or seller).
-const label = mode === 'seller' ? LABELS.SELLER : LABELS.PRODUCT;
-const startRequests = startUrls.map(({ url }) => ({ url: url.trim(), label }));
+// The exit itself is fixed in code (Apify residential US) — see utils/proxy.ts for why that is not
+// a preference on a Cloudflare-fronted site. The input only decides whether to use it at all.
+const proxyChoice = pickProxy(enableProxy);
 
-const crawler = new CheerioCrawler({
-    maxConcurrency: 10,
-    maxRequestRetries: 3,
-    useSessionPool: true,
-    persistCookiesPerSession: true,
-    requestHandler: router,
+// With the switch off we do not even ask the SDK. With it on, `undefined` back from here is a
+// problem rather than a choice — Apify Proxy was asked for and could not be reached — so the two
+// are logged differently.
+const proxyConfiguration = proxyChoice.enabled ? await Actor.createProxyConfiguration(proxyChoice.settings) : undefined;
+if (proxyConfiguration) {
+    log.info(`Proxy: ${describeProxy(proxyChoice)}`);
+} else if (!proxyChoice.enabled) {
+    log.info('Proxy: none — disabled by `enableProxy: false`; hitting DHGate from this container’s own IP');
+} else {
+    // Locally this is the usual cause: `npm run start:dev` runs the script directly and never sees
+    // `~/.apify/auth.json`, so the SDK finds no token, warns, and carries on without a proxy. Use
+    // `apify run` (or set APIFY_TOKEN) to actually get one. On the platform the SDK throws instead.
+    log.warning(
+        'Proxy: none — Apify Proxy was requested but no token or password is available, so DHGate ' +
+            'is being hit from this machine’s own IP. Expect many more Cloudflare challenges.',
+    );
+}
+
+// Which browser binary we drive is the biggest single factor in how often Cloudflare challenges us,
+// so it is resolved and logged up front rather than buried in the launch options. See utils/browser.ts.
+const chrome = chooseChrome();
+log[chrome.useChrome ? 'info' : 'warning'](`Browser: ${chrome.description}`);
+
+// Every URL in a run is checked with the same mode (product or seller).
+const startLabel = mode === 'seller' ? LABELS.SELLER : LABELS.PRODUCT;
+// Regional hosts (es./fr./…) are rewritten to www: they serve the same page but in the local
+// language — which the `language` cookie cannot override — and each one carries its own Cloudflare
+// challenge. The regional context is preserved rather than discarded: the original subdomain
+// becomes the ship-to country, applied per request in the pre-navigation hook.
+const requests = startUrls.map((req) => {
+    const url = normalizeDhgateHost(req.url.trim());
+    const shipCountry = extractDhgateShipCountry(req.url);
+    if (url !== req.url) log.info(`Normalized ${req.url} -> ${url} (ship to ${shipCountry})`);
+    return {
+        ...req,
+        url,
+        label: startLabel,
+        userData: { ...req.userData, shipCountry, inputUrl: req.url },
+    };
+});
+
+// Force DHGate to render in English and price in USD regardless of the (proxy) IP geolocation.
+// Ship-to is per request — see `shipCountry` — so a URL taken from a regional storefront is still
+// judged in that region's context, just described in English.
+const localeCookies = (shipCountry: string) => [
+    { name: 'language', value: 'en', domain: '.dhgate.com', path: '/' },
+    { name: 'b2b_ship_country', value: shipCountry, domain: '.dhgate.com', path: '/' },
+    { name: 'intl_currency', value: 'USD', domain: '.dhgate.com', path: '/' },
+];
+
+// How long to wait after a failed attempt before Crawlee retries the request.
+// Crawlee retries immediately by default, which hammers DHGate right when it is
+// already unhappy with us; a short pause makes failures easier to observe while testing.
+const RETRY_DELAY_MILLIS = 5_000;
+
+const crawler = new PlaywrightCrawler({
+    // Proxy is configurable and defaults to Apify RESIDENTIAL/US. Note what it does and does not
+    // fix: the same IP that gets challenged in an automated browser answers 200 to curl and to a
+    // real Chrome, so the challenge is a *fingerprint* trigger, not an IP ban, and a proxy alone
+    // will not make it disappear. What a residential US exit buys is a gentler Cloudflare threat
+    // score (fewer interactive "Verify you are human" variants) and a fresh IP per retired
+    // session. See utils/cloudflare.ts.
+    proxyConfiguration,
+    maxRequestsPerCrawl,
+    // Crawlee treats 403 as "blocked" and throws in its own response handler, before any of our
+    // code — including the challenge wait below — gets a say. But on DHGate every first hit is a
+    // 403: that is what the Cloudflare interstitial is served with, and it clears itself seconds
+    // later. So 403 is taken off this list and judged after the wait instead, by `detectBlocked`
+    // in the handlers, which by then knows whether the challenge actually passed.
+    sessionPoolOptions: { blockedStatusCodes: [401, 429] },
+    requestHandler: createRouter(),
+    // Runs between a failed attempt and the next one (not after the last retry —
+    // that is `failedRequestHandler`), so awaiting here delays only the retry.
+    errorHandler: async ({ request }, error) => {
+        log.warning(
+            `Attempt ${request.retryCount + 1} failed for ${request.url}: ${(error as Error).message}. ` +
+                `Retrying in ${RETRY_DELAY_MILLIS / 1000}s.`,
+        );
+        await sleep(RETRY_DELAY_MILLIS);
+    },
+    // Last stop after every retry is spent. Without this the URL would simply vanish from the
+    // output, leaving the caller unable to tell "we never managed to load it" from "we never
+    // tried" — so it gets a row like any other, with `active: null`. That null matters: this Actor
+    // exists to answer "is it still up?", and a page we never saw must not be reported as gone.
+    failedRequestHandler: async ({ request, pushData }, error) => {
+        const url = reportedUrl(request);
+        await pushData(
+            statusItem(url, mode, {
+                active: null,
+                reason: 'check_failed',
+                error: `gave up after ${request.retryCount} retries: ${(error as Error).message}`,
+            }),
+        );
+        log.error(`${url} → active=null | reason=check_failed (${(error as Error).message})`);
+    },
+    // Headed, and not negotiable: Playwright's bundled Chromium in headless mode never clears
+    // DHGate's Cloudflare challenge — verified against a live product URL, it sat on the
+    // interstitial for the full 30s. Headed, the same browser clears it in about five seconds.
+    headless: false,
     preNavigationHooks: [
-        async ({ request }) => {
-            request.headers = {
-                ...(request.headers ?? {}),
-                Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Upgrade-Insecure-Requests': '1',
-            };
+        async ({ page, request }, gotoOptions) => {
+            // Crawlee waits for `load` by default, which DHGate's error pages never fire: a dead
+            // product/store URL burnt the full 60s navigation timeout, three times over, before
+            // the handler ever got to say "not found". `domcontentloaded` fires on those pages in
+            // about a second, and the checks all gate on their own selectors anyway — none of
+            // them needs images and trackers to have finished loading.
+            gotoOptions.waitUntil = 'domcontentloaded';
+            // Set the locale cookies before the first navigation so the very first render is
+            // already English / USD and shipping to the right country. Browser contexts are
+            // reused across requests, so this re-writes `b2b_ship_country` every time rather
+            // than letting the previous request's country leak into this one.
+            const { shipCountry = DEFAULT_SHIP_COUNTRY } = request.userData as { shipCountry?: string };
+            await page.context().addCookies(localeCookies(shipCountry));
         },
     ],
+    postNavigationHooks: [
+        // DHGate serves a Cloudflare "Just a moment…" interstitial (HTTP 403) in front of its
+        // pages. It has to be dealt with here, before any handler runs: the handlers' `detectBlocked`
+        // sees the 403 and throws instantly, burning all three retries on a challenge that was
+        // about to pass. See utils/cloudflare.ts for the two ways past it.
+        passCloudflare,
+    ],
+    browserPoolOptions: {
+        // Crawlee injects a generated fingerprint (usually a Windows Chrome UA and matching JS
+        // shims) by default. That helps a bundled Chromium and actively hurts a real one: the
+        // spoofed navigator says Windows while the platform APIs, fonts and GPU strings underneath
+        // say Linux, and *that mismatch* is precisely what Cloudflare grades. It is also injected
+        // with `addInitScript`, which is one of the things Patchright exists to keep off the page.
+        // A real Chrome's own consistent fingerprint beats a fabricated one.
+        useFingerprints: !chrome.useChrome,
+        prePageCreateHooks: [
+            (_pageId, _controller, pageOptions) => {
+                // Playwright's default 1280x720 viewport is applied through the CDP call
+                // `Emulation.setDeviceMetricsOverride`, and a page whose metrics are overridden does
+                // not look like a window someone opened. `null` means "whatever the real window is",
+                // which is what Patchright's own recommended configuration asks for. Click positions
+                // are measured off the live DOM, so nothing downstream depends on a fixed size.
+                // BrowserPool's hook contract is to mutate the options object it hands in; there is
+                // no return value it would read, so the reassignment is the API, not a slip.
+                // eslint-disable-next-line no-param-reassign
+                if (pageOptions) pageOptions.viewport = null;
+            },
+        ],
+    },
+    launchContext: {
+        // Patchright is a drop-in Playwright fork that closes the leaks vanilla Playwright opens in
+        // the browser it drives — chiefly the `Runtime.Enable` CDP call, which Cloudflare and
+        // DataDome both watch for. Everything measurable had already been ruled out on the platform
+        // (real Chrome, residential IP, a click landing 1px off the checkbox centre, healthy CPU)
+        // and the challenge still refused, which leaves how the browser is driven rather than what
+        // it is. Crawlee only needs a launcher with Playwright's shape, so this is a one-line swap.
+        // The cast bridges a *type* gap, not a behavioural one: `patchright-core` tracks Playwright
+        // 1.62 while this project is pinned to 1.60 to match the Docker base image, so its `Locator`
+        // declares methods (`waitForFunction`) that 1.60's does not, and the two structural types
+        // refuse to unify. The runtime API Crawlee actually calls — `launch`, `name`, `connect` —
+        // is identical, which is the whole premise of a drop-in fork. Upgrading Playwright instead
+        // would break `check-playwright-version.mjs` against the 1.60 base image.
+        launcher: patchrightChromium as unknown as BrowserType,
+        // The real Google Chrome, not a bundled Chromium — Patchright's documented configuration
+        // asks for the branded build too. `executablePath` is the one utils/browser.ts actually
+        // probed for, so Crawlee does not have to guess a second time.
+        useChrome: chrome.useChrome,
+        launchOptions: {
+            executablePath: chrome.executablePath,
+            args: [
+                '--disable-gpu', // Mitigates the "crashing GPU process" issue in Docker containers
+            ],
+            // Deliberately absent: `--disable-blink-features=AutomationControlled`. Patchright
+            // handles `navigator.webdriver` at a lower level, and the flag is itself a deviation
+            // from how a real Chrome is started — which is one of the things Patchright patches out
+            // of the command line. Adding it back would undo part of what it is here to do.
+        },
+    },
 });
 
 // Gracefully shut down when the Actor is aborted to minimize cost.
 Actor.on('aborting', async () => {
-    await setTimeout(1000);
+    await sleep(1000);
     await Actor.exit();
 });
 
-await crawler.run(startRequests);
+await crawler.run(requests);
 
 // Exit successfully
 await Actor.exit();

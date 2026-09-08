@@ -1,11 +1,17 @@
 # Specify the base Docker image. You can read more about
 # the available images at https://crawlee.dev/docs/guides/docker-images
 # You can also use any other image from Docker Hub.
-FROM apify/actor-node:24 AS builder
+FROM apify/actor-node-playwright-chrome:24-1.60.0 AS builder
+
+# Check preinstalled packages
+RUN npm ls @crawlee/core apify puppeteer playwright
 
 # Copy just package.json and package-lock.json
 # to speed up the build using Docker layer cache.
-COPY --chown=myuser:myuser package*.json ./
+COPY --chown=myuser:myuser package*.json Dockerfile ./
+
+# Check Playwright version is the same as the one from base image.
+RUN node check-playwright-version.mjs
 
 # Install all dependencies. Don't audit to speed up the installation.
 RUN npm install --include=dev --audit=false
@@ -19,7 +25,10 @@ COPY --chown=myuser:myuser . ./
 RUN npm run build
 
 # Create final image
-FROM apify/actor-node:24
+FROM apify/actor-node-playwright-chrome:24-1.60.0
+
+# Check preinstalled packages
+RUN npm ls @crawlee/core apify puppeteer playwright
 
 # Copy just package.json and package-lock.json
 # to speed up the build using Docker layer cache.
@@ -39,7 +48,7 @@ RUN npm --quiet set progress=false \
     && rm -r ~/.npm
 
 # Copy built JS files from builder image
-COPY --from=builder --chown=myuser:myuser /usr/src/app/dist ./dist
+COPY --from=builder --chown=myuser:myuser /home/myuser/dist ./dist
 
 # Next, copy the remaining files and directories with the source code.
 # Since we do this after NPM install, quick build will be really fast

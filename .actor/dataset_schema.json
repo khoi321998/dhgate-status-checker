@@ -6,7 +6,7 @@
         "overview": {
             "title": "Overview",
             "transformation": {
-                "fields": ["url", "active", "reason", "checkedAt"]
+                "fields": ["url", "mode", "id", "active", "reason", "title", "httpStatus", "error", "checkedAt"]
             },
             "display": {
                 "component": "table",
@@ -15,12 +15,32 @@
                         "label": "URL",
                         "format": "link"
                     },
+                    "mode": {
+                        "label": "Checked As",
+                        "format": "text"
+                    },
+                    "id": {
+                        "label": "DHgate ID",
+                        "format": "text"
+                    },
                     "active": {
                         "label": "Active",
                         "format": "boolean"
                     },
                     "reason": {
                         "label": "Reason",
+                        "format": "text"
+                    },
+                    "title": {
+                        "label": "Title / Store",
+                        "format": "text"
+                    },
+                    "httpStatus": {
+                        "label": "HTTP",
+                        "format": "number"
+                    },
+                    "error": {
+                        "label": "Error",
                         "format": "text"
                     },
                     "checkedAt": {
