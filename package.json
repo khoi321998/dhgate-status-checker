@@ -12,6 +12,11 @@
 		"patchright": "^1.62.3",
 		"playwright": "1.60.0"
 	},
+	"overrides": {
+		"@crawlee/core": "^3.18.1",
+		"@crawlee/types": "^3.18.1",
+		"@crawlee/utils": "^3.18.1"
+	},
 	"devDependencies": {
 		"@apify/eslint-config": "^2.0.0",
 		"@apify/tsconfig": "^0.1.1",
